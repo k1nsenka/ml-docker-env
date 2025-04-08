@@ -1,0 +1,12 @@
+services:
+  ml_env:
+    hostname: ml_env
+    image: ml-arm64
+    build: .
+    volumes:
+      - ./docker-data/:/workspace
+    ports:
+      - "8888:8888"  # Jupyter用ポート、環境によって変更
+    tty: true
+    restart: always
+    platform: linux/amd64  # x86アーキテクチャの指定
