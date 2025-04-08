@@ -18,7 +18,7 @@ git clone https://github.com/あなたのユーザー名/リポジトリ名.git
 cd リポジトリ名
 
 # 実行権限を付与
-chmod +x start_container.sh start_jupyter.sh
+chmod +x start-container.sh start-jupyter.sh
 
 # データディレクトリを作成
 mkdir -p docker_data
