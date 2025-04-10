@@ -61,3 +61,14 @@ env/
 .vscode/
 *.swp
 *.swo
+
+# code-server関連
+code-server-config.yaml
+.code-server/
+.vscode-server/
+data/
+.local/share/code-server/
+**/code-server/cache/
+**/code-server/logs/
+**/Machine/settings.json
+**/User/settings.json
