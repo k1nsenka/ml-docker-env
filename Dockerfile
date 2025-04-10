@@ -11,6 +11,9 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     python3-dev \
     python3-venv \
+    curl \
+    gpg \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # タイムゾーンを設定
@@ -33,6 +36,16 @@ RUN pip install --upgrade pip && \
     torch \
     torchvision \
     torchaudio
+
+# code-serverのインストール
+RUN curl -fsSL https://code-server.dev/install.sh | sh
+
+# code-serverの設定ディレクトリ作成
+RUN mkdir -p /root/.config/code-server
+COPY code-server-config.yaml /root/.config/code-server/config.yaml
+
+# Pythonの拡張機能をプリインストール
+RUN code-server --install-extension ms-python.python
 
 # 作業ディレクトリの作成
 WORKDIR /workspace

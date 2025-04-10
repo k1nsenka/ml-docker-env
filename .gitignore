@@ -23,6 +23,7 @@ Icon
 .docker_files_hash
 .docker_files_hash.new
 docker_data/
+backups/
 
 # Jupyter関連
 .ipynb_checkpoints
@@ -72,3 +73,10 @@ data/
 **/code-server/logs/
 **/Machine/settings.json
 **/User/settings.json
+
+# バックアップとリストア
+backups/
+*.tar.gz
+requirements_*.txt
+extensions_*.txt
+bash_history_*.txt

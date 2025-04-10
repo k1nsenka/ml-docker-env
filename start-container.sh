@@ -3,11 +3,68 @@
 # エラーが発生した時点でスクリプトを終了
 set -e
 
+# 自動モードフラグ
+AUTO_MODE=false
+
+# 引数の解析
+for arg in "$@"; do
+    case $arg in
+        -auto|--auto)
+        AUTO_MODE=true
+        shift
+        ;;
+        *)
+        # 不明な引数はスキップ
+        shift
+        ;;
+    esac
+done
+
 # スクリプトの実行ディレクトリに移動
 cd "$(dirname "$0")"
 
 # ハッシュファイルの保存場所
 HASH_FILE=".docker_files_hash"
+
+# 初期セットアップ確認
+setup_initial_environment() {
+    # 必要なディレクトリの作成
+    if [ ! -d "docker-data" ]; then
+        echo "docker-dataディレクトリを作成します..."
+        mkdir -p docker-data
+    fi
+    
+    if [ ! -d "backups" ]; then
+        echo "backupsディレクトリを作成します..."
+        mkdir -p backups
+    fi
+    
+    # code-server設定ファイルの確認
+    if [ ! -f "code-server-config.yaml" ]; then
+        echo "code-server-config.yamlが見つかりません。デフォルト設定を作成します..."
+        cat > code-server-config.yaml << EOL
+bind-addr: 0.0.0.0:8080
+auth: password
+password: password
+cert: false
+EOL
+        echo "code-server-config.yamlを作成しました"
+    fi
+    
+    # ハッシュファイルの初期化
+    if [ ! -f "$HASH_FILE" ]; then
+        echo "初回実行: Docker設定ファイルのハッシュを初期化します..."
+        touch "$HASH_FILE"
+    fi
+    
+    # スクリプトの実行権限確認
+    for script in start-jupyter.sh start-code-server.sh backup-restore.sh schedule-backup.sh cleanup-old-backups.sh; do
+        if [ -f "$script" ] && [ ! -x "$script" ]; then
+            echo "${script}に実行権限を付与します..."
+            chmod +x "$script"
+        fi
+    done
+}
 
 # bashrcの設定内容
 BASHRC_CONTENT='
@@ -46,7 +103,7 @@ container_status() {
 
 # Dockerファイルのハッシュを計算
 calculate_hash() {
-    find . -type f \( -name "Dockerfile" -o -name "docker-compose.yml" \) -exec sha256sum {} \; | sort > "${HASH_FILE}.new"
+    find . -type f \( -name "Dockerfile" -o -name "docker-compose.yml" -o -name "code-server-config.yaml" \) -exec sha256sum {} \; | sort > "${HASH_FILE}.new"
 }
 
 # ファイルの変更を確認
@@ -80,8 +137,73 @@ start_jupyter() {
     echo "JupyterLab started. Access at http://localhost:8888"
 }
 
+# Code-Serverの起動
+start_code_server() {
+    echo "Starting Code-Server..."
+    docker-compose exec -d ml_env bash -c "code-server --bind-addr 0.0.0.0:8080 /workspace"
+    echo "Code-Server started. Access at http://localhost:8080"
+    echo "Default password: password (configured in code-server-config.yaml)"
+}
+
+# 自動バックアップのセットアップ
+setup_auto_backup() {
+    local option="$1"
+    
+    echo "自動バックアップの設定"
+    
+    if [ "$AUTO_MODE" = true ]; then
+        echo "自動モード: デフォルト設定を適用します（6時間ごとのバックアップ）"
+        ./schedule-backup.sh 6
+        return
+    fi
+    
+    echo "Macが予期せず終了した場合でもデータを保護するため、定期的なバックアップをスケジュールします"
+    echo "----------------------------------------"
+    echo "1. 6時間ごとに自動バックアップ (デフォルト)"
+    echo "2. 12時間ごとに自動バックアップ"
+    echo "3. 24時間ごとに自動バックアップ"
+    echo "4. 自動バックアップを設定しない"
+    echo "5. カスタム間隔を設定する"
+    echo "----------------------------------------"
+    
+    read -p "オプションを選択してください [1-5]: " BACKUP_OPTION
+    option=${BACKUP_OPTION:-1}
+    
+    case $option in
+        2)
+            ./schedule-backup.sh 12
+            ;;
+        3)
+            ./schedule-backup.sh 24
+            ;;
+        4)
+            ./schedule-backup.sh 0
+            ;;
+        5)
+            read -p "バックアップ間隔を時間単位で入力してください: " CUSTOM_HOURS
+            read -p "バックアップの保持日数を入力してください (デフォルト: 30): " CUSTOM_DAYS
+            CUSTOM_DAYS=${CUSTOM_DAYS:-30}
+            ./schedule-backup.sh $CUSTOM_HOURS $CUSTOM_DAYS
+            ;;
+        *)
+            # デフォルト: 6時間
+            ./schedule-backup.sh 6
+            ;;
+    esac
+}
+
+# 自動モードでサービス選択
+select_services_auto() {
+    echo "自動モード: JupyterLabとCode-Serverの両方を起動します"
+    start_jupyter
+    start_code_server
+}
+
 # メイン処理
 main() {
+    # 初期セットアップの確認
+    setup_initial_environment
+    
     # 不要なイメージを削除
     cleanup_images
     
@@ -127,10 +249,55 @@ main() {
         exit 1
     fi
     
-    # Jupyterを起動するか尋ねる
-    read -p "Do you want to start JupyterLab? [y/N]: " START_JUPYTER
-    if [[ "$START_JUPYTER" =~ ^[Yy]$ ]]; then
-        start_jupyter
+    # 自動バックアップのセットアップ
+    # バックアップスクリプトに実行権限があるか確認
+    if [ -f "./backup-restore.sh" ] && [ -f "./schedule-backup.sh" ]; then
+        if [ ! -x "./backup-restore.sh" ] || [ ! -x "./schedule-backup.sh" ]; then
+            chmod +x ./backup-restore.sh ./schedule-backup.sh
+        fi
+        
+        # 自動モードの場合はデフォルト設定を使用
+        if [ "$AUTO_MODE" = true ]; then
+            setup_auto_backup 1
+        else
+            # 自動バックアップを設定するか質問
+            read -p "定期的な自動バックアップを設定しますか？ [Y/n]: " SETUP_BACKUP
+            if [[ "$SETUP_BACKUP" =~ ^[Nn]$ ]]; then
+                echo "自動バックアップは設定されていません。必要に応じて手動で ./backup-restore.sh backup を実行してください。"
+            else
+                setup_auto_backup
+            fi
+        fi
+    else
+        echo "注意: バックアップスクリプトが見つかりません。自動バックアップは設定されません。"
+    fi
+    
+    # サービスの起動選択
+    if [ "$AUTO_MODE" = true ]; then
+        select_services_auto
+    else
+        echo "Select services to start:"
+        echo "1. JupyterLab"
+        echo "2. Code-Server"
+        echo "3. Both"
+        echo "4. None"
+        read -p "Enter your choice [1-4]: " SERVICE_CHOICE
+        
+        case $SERVICE_CHOICE in
+            1)
+                start_jupyter
+                ;;
+            2)
+                start_code_server
+                ;;
+            3)
+                start_jupyter
+                start_code_server
+                ;;
+            *)
+                echo "No services started."
+                ;;
+        esac
     fi
     
     echo "Connecting to container..."
